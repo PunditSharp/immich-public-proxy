@@ -11,6 +11,7 @@ import { Asset, AssetType, ImageSize, KeyType } from './types'
 import { addResponseHeaders, getConfigOption, toString } from './functions'
 import { decrypt, encrypt } from './encrypt'
 import { respondToInvalidRequest } from './invalidRequestHandler'
+import { log } from 'console'
 
 // Extend the Request type with a `password` property
 declare module 'express-serve-static-core' {
@@ -77,7 +78,7 @@ app.get(/^(|\/share)\/healthcheck$/, async (_req, res) => {
 app.get('/:shareType(share|s)/:key/:mode(download)?', decodeCookie, async (req, res) => {
   const keyType = immich.getKeyTypeFromShare(req.params.shareType)
 
-  if (keyType === KeyType.slug && !getConfigOption('ipp.allowSlugLinks', true)) {
+  https://photos.familywright.net/share/vsGo7jAYIklkBeXQjyjhMAuBRPe9kig8kegdDa32kADKQQ5I3fvtxj-Mk2ei-YUKOT4if (keyType === KeyType.slug && !getConfigOption('ipp.allowSlugLinks', true)) {
     // Slug type links are not allowed
     respondToInvalidRequest(res, 404, 'Slug links are disabled in config.json')
   } else {
@@ -116,7 +117,6 @@ app.post('/share/unlock', async (req, res) => {
 app.get('/share/:type(photo|video)/:key/:id/:size?', decodeCookie, async (req, res) => {
   // Add the headers configured in config.json (most likely `cache-control`)
   addResponseHeaders(res)
-
   // Check for valid key and ID
   if (!immich.isKey(req.params.key) || !immich.isId(req.params.id)) {
     respondToInvalidRequest(res, 404, 'Invalid key or ID for ' + req.path)
@@ -146,7 +146,8 @@ app.get('/share/:type(photo|video)/:key/:id/:size?', decodeCookie, async (req, r
 
   // Verify the requested asset belongs to this share link
   const assetBelongsToShare = share.link?.assets?.some(a => a.id === req.params.id)
-  if (!assetBelongsToShare) {
+  const assetHasLivePhotoVideoId = share.link?.assets?.some(a => a.livePhotoVideoId === req.params.id)
+  if (!assetBelongsToShare && !assetHasLivePhotoVideoId) {
     respondToInvalidRequest(res, 404, 'Asset not found in share')
     return
   }
@@ -180,6 +181,65 @@ if (getConfigOption('ipp.showHomePage', true)) {
   })
 }
 
+ /* [ROUTE] JSON metadata for a shared album - for native app clients
+  *
+  * Returns a minimal JSON representation of the share: title, description,
+  * and a curated asset list. Only exposes data that is already present in
+  * the rendered HTML gallery, plus livePhotoVideoId for Live Photo support.
+  *
+  * Password-protected shares require the password as a query parameter:
+  *   GET /share/:key/json?password=hunter2
+  *
+  * Slug-based share keys are also supported:
+  *   GET /s/:key/json
+  */
+app.get('/:shareType(share|s)/:key/json', decodeCookie, async (req, res) => {
+  addResponseHeaders(res)
+ 
+  const keyType = immich.getKeyTypeFromShare(req.params.shareType)
+ 
+  if (!immich.isKey(req.params.key)) {
+    res.status(404).json({ error: 'Invalid key format' })
+    return
+  }
+ 
+  if (keyType === KeyType.slug && !getConfigOption('ipp.allowSlugLinks', true)) {
+    res.status(404).json({ error: 'Slug links are disabled' })
+    return
+  }
+ 
+  // Re-use the existing cookie-decoded password (req.password),
+  // or fall back to a query param for clients that can't use cookies.
+  // The query param path is safe because getShareByKey validates it against Immich.
+  const password = req.password || toString(req.query.password)
+ 
+  // First check if a password is required but not provided
+  const shareResult = await immich.getShareByKey(req.params.key, password, keyType)
+ 
+  if (!shareResult.valid) {
+    res.status(404).json({ error: 'Share not found' })
+    return
+  }
+ 
+  if (shareResult.passwordRequired) {
+    res.status(401).json({ error: 'Password required' })
+    return
+  }
+ 
+  const publicShare = await immich.getPublicShare(req.params.key, password, keyType)
+ 
+  if (!publicShare) {
+    res.status(404).json({ error: 'Share not found' })
+    return
+  }
+ 
+  // Don't cache password-protected responses
+  if (password) {
+    res.header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  }
+  //log('Returning JSON metadata: ' + JSON.stringify(publicShare))
+  res.json(publicShare)
+})
 /*
  * Send a 404 for all other routes
  */

@@ -109,8 +109,17 @@ class Render {
     // You can specify this in your docker-compose file, or send it dynamically as a `publicBaseUrl` header
     const publicBaseUrl = process.env.PUBLIC_BASE_URL || res.req.headers.publicBaseUrl || (res.req.protocol + '://' + res.req.headers.host)
 
+    // Build a set of video IDs that are the Live Photo counterpart of an image asset.
+    // These should not appear as standalone items in the gallery.
+    const livePhotoVideoIds = new Set(
+      share.assets
+        .filter(a => a.type === AssetType.image && a.livePhotoVideoId)
+        .map(a => a.livePhotoVideoId as string)
+    )
+    const assetsToShow = share.assets.filter(asset => !livePhotoVideoIds.has(asset.id))
+
     // Use .map to generate an array of promises, then await them all to load in parallel.
-    const items = await Promise.all(share.assets.map(async (asset) => {
+    const items = await Promise.all(assetsToShow.map(async (asset) => {
       let video, downloadUrl
       if (asset.type === AssetType.video) {
         // Populate the data-video property
@@ -136,13 +145,17 @@ class Render {
       const thumbnailUrl = immich.photoUrl(share.key, asset.id, ImageSize.thumbnail)
       const previewUrl = immich.photoUrl(share.key, asset.id, immich.getPreviewImageSize(asset))
       const description = getConfigOption('ipp.showMetadata.description', false) && typeof asset?.exifInfo?.description === 'string' ? escapeHtml(asset.exifInfo.description) : ''
+      const isLivePhoto = asset.type === AssetType.image && !!asset.livePhotoVideoId
+      const livePhotoVideoUrl = isLivePhoto ? immich.videoUrl(share.key, asset.livePhotoVideoId as string) : null
 
       // Create the full HTML element source to pass to the gallery view
       const itemHtml = [
         video ? `<a data-video='${video}'` : `<a href="${previewUrl}"`,
         downloadUrl ? ` data-download-url="${downloadUrl}"` : '',
         description ? ` data-sub-html='<p>${description}</p>'` : '',
+        livePhotoVideoUrl ? ` data-live-photo-video="${livePhotoVideoUrl}"` : '',
         ` data-download="${this.getFilename(asset)}" data-slide-name="${asset.id}"><img alt="${description}" loading="lazy" src="${thumbnailUrl}" onerror="this.closest('a').classList.add('thumb-error')"/>`,
+        isLivePhoto ? '<div class="live-photo-badge">LIVE</div>' : '',
         video ? '<div class="play-icon"></div>' : '',
         '</a>'
       ].join('')

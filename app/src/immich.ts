@@ -7,7 +7,9 @@ import {
   IncomingShareRequest,
   KeyType,
   SharedLink,
-  SharedLinkResult
+  SharedLinkResult,
+  PublicAsset,
+  PublicShareResponse
 } from './types'
 import dayjs from 'dayjs'
 import { addResponseHeaders, canDownload, getConfigOption, log } from './functions'
@@ -200,14 +202,14 @@ class Immich {
               link
             }
           }
+        } else if (jsonBody?.message === 'Invalid share key') {
+          log('Invalid share key ' + key)
         } else if (res.status === 401) {
           // Password authentication required (handles both "Invalid password" and "Password required" from Immich API)
           return {
             valid: true,
             passwordRequired: true
           }
-        } else if (jsonBody?.message === 'Invalid share key') {
-          log('Invalid share key ' + key)
         } else {
           console.log(JSON.stringify(jsonBody))
         }
@@ -315,6 +317,55 @@ class Immich {
   getKeyTypeFromShare (shareType: string) {
     return shareType === 's' ? KeyType.slug : KeyType.key
   }
+
+   toPublicAsset (asset: Asset): PublicAsset {
+    return {
+      id: asset.id,
+      type: asset.type === AssetType.video ? 'video' : 'image',
+      originalFileName: asset.originalFileName || asset.id,
+      livePhotoVideoId: asset.livePhotoVideoId || null,
+      // Mirror the same config gate that render.ts uses for data-sub-html
+      description: (
+        getConfigOption('ipp.showMetadata.description', false) &&
+        typeof asset?.exifInfo?.description === 'string'
+      ) ? asset.exifInfo.description : ''
+    }
+  }
+ 
+  // This is called to get the album asset information once added.
+  async getPublicShare (key: string, password?: string, keyType: KeyType = KeyType.key): Promise<PublicShareResponse | null> {
+    const result = await this.getShareByKey(key, password, keyType)
+ 
+    if (!result.valid || !result.link) {
+      return null
+    }
+ 
+    const link = result.link
+ 
+    // Build a set of all video IDs that are the Live Photo counterpart of an image.
+    // These should not appear as standalone items in the asset list.
+    const livePhotoVideoIds = new Set(
+      link.assets
+        .filter(a => a.type === AssetType.image && a.livePhotoVideoId)
+        .map(a => a.livePhotoVideoId as string)
+    )
+ 
+    // Filter and map assets
+    const assets: PublicAsset[] = link.assets
+      .filter(asset => !livePhotoVideoIds.has(asset.id))  // remove orphaned Live Photo MOVs
+      .map(asset => this.toPublicAsset(asset))
+ 
+    return {
+      // Mirror render.ts title() and description() logic exactly
+      title: link.description || link?.album?.albumName || 'Gallery',
+      description: getConfigOption('ipp.showGalleryDescription', false)
+        ? (link?.album?.description || '')
+        : '',
+      thumbnail: link.album?.albumThumbnailAssetId,
+      assets
+    }
+  }
+ 
 }
 
 const immich = new Immich()

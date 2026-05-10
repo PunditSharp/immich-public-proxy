@@ -32,6 +32,8 @@ class LGallery {
       */
     }, params.lgConfig))
     this.items = params.items
+    this.setupLivePhotoHover()
+    this.setupLightboxLivePhoto()
 
     const spinner = document.getElementById('loading-spinner')
     if (spinner) {
@@ -42,6 +44,107 @@ class LGallery {
       }, { rootMargin: '200px' })
       observer.observe(spinner)
     }
+  }
+
+  /**
+   * Add a play button to the lightGallery toolbar for Live Photo slides.
+   * The button is shown/hidden as the user navigates between slides.
+   */
+  setupLightboxLivePhoto () {
+    this.element.addEventListener('lgAfterOpen', (e) => {
+      this.onLgSlideChange(e.detail?.index ?? 0)
+    })
+    this.element.addEventListener('lgAfterSlide', (e) => {
+      this.onLgSlideChange(e.detail.index)
+    })
+    this.element.addEventListener('lgBeforeClose', () => {
+      this.stopLivePhotoPlayback()
+      document.querySelector('.lg-live-photo-btn')?.remove()
+    })
+  }
+
+  onLgSlideChange (index) {
+    this.stopLivePhotoPlayback()
+    const videoUrl = this.getLivePhotoVideoUrl(index)
+    let btn = document.querySelector('.lg-live-photo-btn')
+
+    if (videoUrl) {
+      if (!btn) {
+        btn = document.createElement('button')
+        btn.className = 'lg-live-photo-btn lg-icon'
+        btn.title = 'Play Live Photo'
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'
+        const toolbar = document.querySelector('.lg-toolbar')
+        if (toolbar) toolbar.insertBefore(btn, toolbar.children[1] ?? null)
+      }
+      btn.style.display = ''
+      btn.onclick = () => this.toggleLivePhotoPlayback(index)
+    } else if (btn) {
+      btn.style.display = 'none'
+    }
+  }
+
+  getLivePhotoVideoUrl (index) {
+    return this.element.querySelectorAll('a')[index]?.getAttribute('data-live-photo-video') || null
+  }
+
+  toggleLivePhotoPlayback (index) {
+    if (document.querySelector('.lg-live-photo-overlay')) {
+      this.stopLivePhotoPlayback()
+      return
+    }
+    const videoUrl = this.getLivePhotoVideoUrl(index)
+    const imgWrap = document.querySelector('.lg-current .lg-img-wrap')
+    if (!videoUrl || !imgWrap) return
+
+    const video = document.createElement('video')
+    video.className = 'lg-live-photo-overlay'
+    video.src = videoUrl
+    video.muted = true
+    video.loop = true
+    video.playsInline = true
+    imgWrap.appendChild(video)
+    video.play().catch(() => {})
+    document.querySelector('.lg-live-photo-btn')?.classList.add('lg-live-photo-btn--active')
+  }
+
+  stopLivePhotoPlayback () {
+    const video = document.querySelector('.lg-live-photo-overlay')
+    if (video) { video.pause(); video.remove() }
+    document.querySelector('.lg-live-photo-btn')?.classList.remove('lg-live-photo-btn--active')
+  }
+
+  /**
+   * Attach hover-to-play behaviour to any Live Photo thumbnails not yet initialised.
+   * Safe to call multiple times — skips anchors already set up.
+   */
+  setupLivePhotoHover () {
+    document.querySelectorAll('[data-live-photo-video]:not([data-live-photo-init])').forEach(anchor => {
+      anchor.setAttribute('data-live-photo-init', '1')
+      const videoUrl = anchor.getAttribute('data-live-photo-video')
+      let videoEl = null
+
+      const getVideo = () => {
+        if (!videoEl) {
+          videoEl = document.createElement('video')
+          videoEl.className = 'live-photo-video'
+          videoEl.src = videoUrl
+          videoEl.muted = true
+          videoEl.loop = true
+          videoEl.playsInline = true
+          anchor.appendChild(videoEl)
+        }
+        return videoEl
+      }
+
+      anchor.addEventListener('mouseenter', () => getVideo().play().catch(() => {}))
+      anchor.addEventListener('mouseleave', () => {
+        if (videoEl) {
+          videoEl.pause()
+          videoEl.currentTime = 0
+        }
+      })
+    })
   }
 
   /**
@@ -58,6 +161,7 @@ class LGallery {
         })
       this.index += PER_PAGE
       this.lightGallery.refresh()
+      this.setupLivePhotoHover()
     } else {
       // Remove the loading spinner and stop observing once all items are loaded
       observer.disconnect()

@@ -30,11 +30,27 @@ export interface Asset {
   type: AssetType;
   isTrashed: boolean;
   exifInfo?: ExifInfo;
+  livePhotoVideoId?: string | null; // NEW - opaque UUID, needed for Live Photo pairing
 }
 
 export interface Album {
   id: string;
   assets: Asset[];
+}
+
+export interface PublicAsset {
+  id: string                      // already in HTML as href/src
+  type: 'image' | 'video'         // already implied by HTML structure
+  originalFileName: string        // already in data-download attribute
+  livePhotoVideoId: string | null // NEW - opaque UUID, needed for Live Photo pairing
+  description: string             // already in data-sub-html (empty if config disables it)
+}
+ 
+export interface PublicShareResponse {
+  title: string        // already in page <title>
+  description: string  // already on page (empty if ipp.showGalleryDescription is false)
+  thumbnail?: string | null; // NEW - ID for the thumbnail image, needed for the gallery cover photo
+  assets: PublicAsset[]
 }
 
 export interface SharedLink {
@@ -50,6 +66,7 @@ export interface SharedLink {
     albumName?: string;
     order?: string;
     description?: string;
+    albumThumbnailAssetId?: string;
   }
   expiresAt: string | null;
 }
